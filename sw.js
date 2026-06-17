@@ -1,4 +1,4 @@
-const CACHE_NAME = "idea-to-code-v1";
+const CACHE_NAME = "idea-to-code-v2";
 const APP_SHELL = [
   "./",
   "./index.html",

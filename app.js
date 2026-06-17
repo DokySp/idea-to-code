@@ -1,5 +1,5 @@
-const DEFAULT_REPO = "DokySp/idea-to-code";
 const STORAGE_KEYS = {
+  repo: "idea-to-code.repo",
   token: "idea-to-code.github-token",
 };
 const STATUS_LABELS = {
@@ -16,9 +16,11 @@ const LABEL_DEFS = {
   [STATUS_LABELS.done]: { color: "16a34a", description: "Completed item from Idea to Code" },
 };
 
+const inferredRepo = inferRepositoryFromLocation(window.location);
 const state = {
   issues: [],
-  repo: DEFAULT_REPO,
+  repo: inferredRepo || "",
+  repoSource: inferredRepo ? "auto" : "missing",
   token: localStorage.getItem(STORAGE_KEYS.token) || "",
 };
 
@@ -28,6 +30,7 @@ const elements = {
   settingsPanel: $("#settings-panel"),
   settingsForm: $("#settings-form"),
   clearToken: $("#clear-token"),
+  repoInput: $("#repo-input"),
   tokenInput: $("#token-input"),
   repoChip: $("#repo-chip"),
   syncState: $("#sync-state"),
@@ -48,6 +51,41 @@ const elements = {
   },
 };
 
+function inferRepositoryFromLocation(location) {
+  const hostname = location.hostname.toLowerCase();
+  const isWebPage = Boolean(hostname) && /^https?:$/.test(location.protocol);
+  const parts = getPathParts(location);
+
+  if (isWebPage && hostname.endsWith(".github.io")) {
+    const owner = hostname.slice(0, -".github.io".length);
+    const repo = parts[0];
+    if (owner && repo) {
+      return `${owner}/${repo}`;
+    }
+    return owner ? `${owner}/${owner}.github.io` : "";
+  }
+
+  return "";
+}
+
+function getPathParts(location) {
+  return location.pathname
+    .split("/")
+    .map((part) => part.trim())
+    .filter(Boolean)
+    .map((part) => {
+      try {
+        return decodeURIComponent(part);
+      } catch {
+        return part;
+      }
+    });
+}
+
+function isRepoSegment(segment) {
+  return /^[A-Za-z0-9_.-]+$/.test(segment);
+}
+
 function parseRepo(repo) {
   const normalized = repo.trim().replace(/^https:\/\/github\.com\//, "").replace(/\.git$/, "");
   const [owner, name] = normalized.split("/");
@@ -65,6 +103,11 @@ function setBusy(isBusy) {
 function setStatus(message, isError = false) {
   elements.syncState.textContent = message;
   elements.syncState.classList.toggle("danger-text", isError);
+}
+
+function updateRepoDisplay() {
+  elements.repoChip.textContent = state.repo || "Repository 설정 필요";
+  elements.repoInput.value = state.repo;
 }
 
 function authHeaders() {
@@ -121,6 +164,150 @@ async function githubFetchPages(path) {
   }
 }
 
+async function inferRepositoryFromToken() {
+  if (state.repo || !state.token) {
+    return;
+  }
+
+  let verified = "";
+  try {
+    const candidates = await getRepositoryCandidatesFromToken();
+    verified = await findFirstAccessibleRepository(candidates);
+  } catch {
+    return;
+  }
+
+  if (!verified) {
+    return;
+  }
+
+  state.repo = verified;
+  state.repoSource = "token";
+  updateRepoDisplay();
+}
+
+function applySavedRepositoryFallback(options = {}) {
+  const { force = false, exclude = "" } = options;
+  if (state.repo && !force) {
+    return false;
+  }
+
+  const savedRepo = localStorage.getItem(STORAGE_KEYS.repo);
+  if (!savedRepo) {
+    return false;
+  }
+
+  try {
+    const fullName = parseRepo(savedRepo).fullName;
+    if (exclude && fullName.toLowerCase() === exclude.toLowerCase()) {
+      return false;
+    }
+    state.repo = fullName;
+    state.repoSource = "saved";
+    updateRepoDisplay();
+    return true;
+  } catch {
+    localStorage.removeItem(STORAGE_KEYS.repo);
+    return false;
+  }
+}
+
+async function getRepositoryCandidatesFromToken() {
+  const parts = getPathParts(window.location).filter(isRepoSegment);
+  const user = await githubFetch("/user");
+  const candidates = [];
+  const pagesMatches = await findRepositoriesByPagesUrl(window.location, parts[0]);
+  candidates.push(...pagesMatches.map((repo) => repo.full_name));
+
+  if (parts.length >= 2) {
+    candidates.push(`${parts[0]}/${parts[1]}`);
+  }
+
+  if (parts.length >= 1) {
+    candidates.push(`${user.login}/${parts[0]}`);
+    const matchingRepos = await findRepositoriesByName(parts[0]);
+    candidates.push(...matchingRepos.map((repo) => repo.full_name));
+  } else {
+    candidates.push(`${user.login}/${user.login}.github.io`);
+  }
+
+  return [...new Set(candidates)];
+}
+
+async function findRepositoriesByPagesUrl(location, preferredName = "") {
+  if (!location.hostname || location.hostname.endsWith(".github.io")) {
+    return [];
+  }
+
+  const matches = [];
+  const repos = await githubFetchPages("/user/repos?affiliation=owner,collaborator,organization_member&sort=updated");
+  const preferred = preferredName.toLowerCase();
+  const orderedRepos = preferred
+    ? [
+        ...repos.filter((repo) => repo.name.toLowerCase() === preferred),
+        ...repos.filter((repo) => repo.name.toLowerCase() !== preferred),
+      ]
+    : repos;
+
+  for (const repo of orderedRepos) {
+    try {
+      const pages = await githubFetch(`/repos/${repo.full_name}/pages`);
+      if (doesPagesSiteMatchLocation(pages, location)) {
+        matches.push(repo);
+      }
+    } catch {
+      // Repositories without Pages return 404; keep scanning accessible repos.
+    }
+  }
+
+  return matches;
+}
+
+function doesPagesSiteMatchLocation(pages, location) {
+  const hostname = location.hostname.toLowerCase();
+  if (!pages.html_url) {
+    return false;
+  }
+
+  try {
+    const pagesUrl = new URL(pages.html_url);
+    const pagesHostname = pagesUrl.hostname.toLowerCase();
+    const cname = pages.cname ? pages.cname.toLowerCase() : "";
+    if (pagesHostname !== hostname && cname !== hostname) {
+      return false;
+    }
+
+    const currentParts = getPathParts(location);
+    const pagesParts = getPathParts(pagesUrl);
+    return pagesParts.every((part, index) => currentParts[index] === part);
+  } catch {
+    return false;
+  }
+}
+
+async function findRepositoriesByName(name) {
+  const matches = [];
+  const repos = await githubFetchPages("/user/repos?affiliation=owner,collaborator,organization_member&sort=updated");
+  for (const repo of repos) {
+    if (repo.name.toLowerCase() === name.toLowerCase()) {
+      matches.push(repo);
+    }
+  }
+  return matches;
+}
+
+async function findFirstAccessibleRepository(candidates) {
+  for (const candidate of candidates) {
+    try {
+      const repo = await githubFetch(`/repos/${candidate}`);
+      return repo.full_name;
+    } catch {
+      // Keep checking weaker candidates before falling back to manual settings.
+    }
+  }
+  return "";
+}
+
 async function ensureStatusLabels(owner, repo) {
   const existing = await githubFetchPages(`/repos/${owner}/${repo}/labels`);
   const names = new Set(existing.map((label) => label.name));
@@ -167,6 +354,19 @@ function titleFromText(text) {
 }
 
 async function loadIssues() {
+  await inferRepositoryFromToken();
+  applySavedRepositoryFallback();
+
+  if (!state.repo) {
+    elements.settingsPanel.hidden = false;
+    setStatus("Repository를 자동 감지하지 못했습니다.", true);
+    return;
+  }
+
+  await loadIssuesForCurrentRepository();
+}
+
+async function loadIssuesForCurrentRepository() {
   const { owner, name, fullName } = parseRepo(state.repo);
   elements.repoChip.textContent = fullName;
   setBusy(true);
@@ -181,6 +381,11 @@ async function loadIssues() {
     renderIssues();
     setStatus(`동기화 완료: ${state.issues.length}개`);
   } catch (error) {
+    if (state.repoSource !== "saved" && applySavedRepositoryFallback({ force: true, exclude: fullName })) {
+      setBusy(false);
+      await loadIssuesForCurrentRepository();
+      return;
+    }
     setStatus(error.message, true);
   } finally {
     setBusy(false);
@@ -282,7 +487,15 @@ function renderIssues() {
 }
 
 function saveSettings(formData) {
+  const repo = String(formData.get("repo") || "").trim();
   const token = String(formData.get("token") || "").trim();
+
+  if (repo) {
+    const { fullName } = parseRepo(repo);
+    state.repo = fullName;
+    state.repoSource = "saved";
+    localStorage.setItem(STORAGE_KEYS.repo, fullName);
+  }
 
   if (token) {
     state.token = token;
@@ -290,7 +503,7 @@ function saveSettings(formData) {
   }
 
   elements.tokenInput.value = "";
-  elements.repoChip.textContent = state.repo;
+  updateRepoDisplay();
   elements.settingsPanel.hidden = true;
   setStatus("설정 저장 완료");
 }
@@ -352,16 +565,22 @@ async function registerServiceWorker() {
 }
 
 function init() {
-  elements.repoChip.textContent = state.repo;
+  if (!state.token) {
+    applySavedRepositoryFallback();
+  }
+  updateRepoDisplay();
   bindEvents();
   renderIssues();
   registerServiceWorker();
 
+  if (!state.repo || !state.token) {
+    elements.settingsPanel.hidden = false;
+  }
+
   if (state.token) {
     loadIssues();
   } else {
-    elements.settingsPanel.hidden = false;
-    setStatus("GitHub token 저장 필요");
+    setStatus(state.repo ? "GitHub token 저장 필요" : "Repository 설정 필요", true);
   }
 }
 
