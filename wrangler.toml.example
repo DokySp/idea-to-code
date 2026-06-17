@@ -1,0 +1,13 @@
+name = "idea-to-code-oauth"
+main = "oauth-worker.js"
+compatibility_date = "2026-06-18"
+
+# Replace this with the deployed PWA origin.
+# Examples:
+# ALLOWED_ORIGINS = "https://dokysp.github.io,https://doky.space"
+[vars]
+ALLOWED_ORIGINS = "https://example.github.io"
+GITHUB_CLIENT_ID = "replace-with-oauth-app-client-id"
+
+# Store the client secret with:
+# wrangler secret put GITHUB_CLIENT_SECRET

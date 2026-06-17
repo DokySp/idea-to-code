@@ -1,7 +1,12 @@
 const STORAGE_KEYS = {
   repo: "idea-to-code.repo",
   token: "idea-to-code.github-token",
+  clientId: "idea-to-code.github-client-id",
+  oauthEndpoint: "idea-to-code.oauth-endpoint",
+  oauthState: "idea-to-code.oauth-state",
 };
+const GITHUB_AUTHORIZE_URL = "https://github.com/login/oauth/authorize";
+const GITHUB_OAUTH_SCOPE = "repo";
 const STATUS_LABELS = {
   todo: "status:todo",
   doing: "status:doing",
@@ -22,6 +27,8 @@ const state = {
   repo: inferredRepo || "",
   repoSource: inferredRepo ? "auto" : "missing",
   token: localStorage.getItem(STORAGE_KEYS.token) || "",
+  clientId: localStorage.getItem(STORAGE_KEYS.clientId) || "",
+  oauthEndpoint: localStorage.getItem(STORAGE_KEYS.oauthEndpoint) || "",
 };
 
 const $ = (selector) => document.querySelector(selector);
@@ -29,9 +36,11 @@ const elements = {
   settingsToggle: $("#settings-toggle"),
   settingsPanel: $("#settings-panel"),
   settingsForm: $("#settings-form"),
-  clearToken: $("#clear-token"),
+  loginButton: $("#login-button"),
+  logoutButton: $("#logout-button"),
   repoInput: $("#repo-input"),
-  tokenInput: $("#token-input"),
+  clientIdInput: $("#client-id-input"),
+  oauthEndpointInput: $("#oauth-endpoint-input"),
   repoChip: $("#repo-chip"),
   syncState: $("#sync-state"),
   refreshButton: $("#refresh-button"),
@@ -108,11 +117,13 @@ function setStatus(message, isError = false) {
 function updateRepoDisplay() {
   elements.repoChip.textContent = state.repo || "Repository 설정 필요";
   elements.repoInput.value = state.repo;
+  elements.clientIdInput.value = state.clientId;
+  elements.oauthEndpointInput.value = state.oauthEndpoint;
 }
 
 function authHeaders() {
   if (!state.token) {
-    throw new Error("GitHub token을 먼저 저장하세요.");
+    throw new Error("GitHub 로그인이 필요합니다.");
   }
   return {
     Accept: "application/vnd.github+json",
@@ -120,6 +131,159 @@ function authHeaders() {
     "Content-Type": "application/json",
     "X-GitHub-Api-Version": "2022-11-28",
   };
+}
+
+function getRedirectUri() {
+  return `${window.location.origin}${window.location.pathname}`;
+}
+
+function getCleanUrl() {
+  return `${window.location.origin}${window.location.pathname}${window.location.hash || ""}`;
+}
+
+function createOAuthState() {
+  const bytes = new Uint8Array(16);
+  crypto.getRandomValues(bytes);
+  return Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+function saveOAuthSettings(formData) {
+  const repo = String(formData.get("repo") || "").trim();
+  const clientId = String(formData.get("clientId") || "").trim();
+  const oauthEndpoint = String(formData.get("oauthEndpoint") || "").trim();
+
+  if (repo) {
+    const { fullName } = parseRepo(repo);
+    state.repo = fullName;
+    state.repoSource = "saved";
+    localStorage.setItem(STORAGE_KEYS.repo, fullName);
+  }
+
+  if (clientId) {
+    state.clientId = clientId;
+    localStorage.setItem(STORAGE_KEYS.clientId, clientId);
+  }
+
+  if (oauthEndpoint) {
+    state.oauthEndpoint = normalizeOAuthEndpoint(oauthEndpoint);
+    localStorage.setItem(STORAGE_KEYS.oauthEndpoint, state.oauthEndpoint);
+  }
+
+  updateRepoDisplay();
+}
+
+function normalizeOAuthEndpoint(endpoint) {
+  const url = new URL(endpoint);
+  if (!/^https?:$/.test(url.protocol)) {
+    throw new Error("OAuth Exchange URL은 http 또는 https URL이어야 합니다.");
+  }
+  return url.toString();
+}
+
+function startOAuthLogin() {
+  try {
+    saveOAuthSettings(new FormData(elements.settingsForm));
+  } catch (error) {
+    setStatus(error.message, true);
+    return;
+  }
+
+  if (!state.clientId || !state.oauthEndpoint) {
+    elements.settingsPanel.hidden = false;
+    setStatus("OAuth Client ID와 Exchange URL을 먼저 저장하세요.", true);
+    return;
+  }
+
+  const oauthState = createOAuthState();
+  localStorage.setItem(STORAGE_KEYS.oauthState, oauthState);
+
+  const url = new URL(GITHUB_AUTHORIZE_URL);
+  url.searchParams.set("client_id", state.clientId);
+  url.searchParams.set("redirect_uri", getRedirectUri());
+  url.searchParams.set("scope", GITHUB_OAUTH_SCOPE);
+  url.searchParams.set("state", oauthState);
+  window.location.assign(url.toString());
+}
+
+async function handleOAuthCallback() {
+  const params = new URLSearchParams(window.location.search);
+  const code = params.get("code");
+  const oauthError = params.get("error");
+  const returnedState = params.get("state");
+  if (!code && !oauthError) {
+    return false;
+  }
+
+  const expectedState = localStorage.getItem(STORAGE_KEYS.oauthState);
+  localStorage.removeItem(STORAGE_KEYS.oauthState);
+  window.history.replaceState({}, document.title, getCleanUrl());
+
+  if (oauthError) {
+    elements.settingsPanel.hidden = false;
+    setStatus(params.get("error_description") || oauthError, true);
+    return true;
+  }
+
+  if (!expectedState || returnedState !== expectedState) {
+    setStatus("GitHub OAuth state 검증 실패", true);
+    elements.settingsPanel.hidden = false;
+    return true;
+  }
+
+  if (!state.oauthEndpoint) {
+    setStatus("OAuth Exchange URL 설정이 필요합니다.", true);
+    elements.settingsPanel.hidden = false;
+    return true;
+  }
+
+  setBusy(true);
+  setStatus("GitHub 로그인 처리 중");
+  try {
+    const token = await exchangeOAuthCode(code);
+    state.token = token;
+    localStorage.setItem(STORAGE_KEYS.token, token);
+    elements.settingsPanel.hidden = true;
+    setStatus("GitHub 로그인 완료");
+    await loadIssues();
+  } catch (error) {
+    elements.settingsPanel.hidden = false;
+    setStatus(error.message, true);
+  } finally {
+    setBusy(false);
+  }
+
+  return true;
+}
+
+async function exchangeOAuthCode(code) {
+  const response = await fetch(state.oauthEndpoint, {
+    method: "POST",
+    headers: {
+      Accept: "application/json",
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      code,
+      redirect_uri: getRedirectUri(),
+    }),
+  });
+
+  let body = {};
+  try {
+    body = await response.json();
+  } catch {
+    // Keep the generic error below.
+  }
+
+  if (!response.ok || body.error) {
+    throw new Error(body.error_description || body.error || `OAuth exchange failed: ${response.status}`);
+  }
+
+  if (!body.access_token) {
+    throw new Error("OAuth exchange 응답에 access_token이 없습니다.");
+  }
+
+  return body.access_token;
 }
 
 async function githubFetch(path, options = {}) {
@@ -487,22 +651,7 @@ function renderIssues() {
 }
 
 function saveSettings(formData) {
-  const repo = String(formData.get("repo") || "").trim();
-  const token = String(formData.get("token") || "").trim();
-
-  if (repo) {
-    const { fullName } = parseRepo(repo);
-    state.repo = fullName;
-    state.repoSource = "saved";
-    localStorage.setItem(STORAGE_KEYS.repo, fullName);
-  }
-
-  if (token) {
-    state.token = token;
-    localStorage.setItem(STORAGE_KEYS.token, token);
-  }
-
-  elements.tokenInput.value = "";
+  saveOAuthSettings(formData);
   updateRepoDisplay();
   elements.settingsPanel.hidden = true;
   setStatus("설정 저장 완료");
@@ -523,11 +672,13 @@ function bindEvents() {
     }
   });
 
-  elements.clearToken.addEventListener("click", () => {
+  elements.loginButton.addEventListener("click", startOAuthLogin);
+
+  elements.logoutButton.addEventListener("click", () => {
     state.token = "";
     localStorage.removeItem(STORAGE_KEYS.token);
-    elements.tokenInput.value = "";
-    setStatus("토큰 삭제 완료");
+    elements.settingsPanel.hidden = false;
+    setStatus("로그아웃 완료");
   });
 
   elements.refreshButton.addEventListener("click", loadIssues);
@@ -564,7 +715,7 @@ async function registerServiceWorker() {
   }
 }
 
-function init() {
+async function init() {
   if (!state.token) {
     applySavedRepositoryFallback();
   }
@@ -573,6 +724,10 @@ function init() {
   renderIssues();
   registerServiceWorker();
 
+  if (await handleOAuthCallback()) {
+    return;
+  }
+
   if (!state.repo || !state.token) {
     elements.settingsPanel.hidden = false;
   }
@@ -580,7 +735,7 @@ function init() {
   if (state.token) {
     loadIssues();
   } else {
-    setStatus(state.repo ? "GitHub token 저장 필요" : "Repository 설정 필요", true);
+    setStatus(state.repo ? "GitHub 로그인 필요" : "Repository 설정 필요", true);
   }
 }
 
