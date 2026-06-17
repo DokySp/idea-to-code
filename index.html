@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#0f172a" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; connect-src https://api.github.com; img-src 'self'; style-src 'self'; script-src 'self'; manifest-src 'self'; base-uri 'none'; form-action 'none'"
+    />
+    <title>Idea to Code</title>
+    <link rel="manifest" href="./manifest.webmanifest" />
+    <link rel="icon" href="./icons/icon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">GitHub Issues TODO</p>
+          <h1>Idea to Code</h1>
+        </div>
+        <button class="icon-button" id="settings-toggle" type="button" aria-label="설정 열기" title="설정">
+          <span aria-hidden="true">⚙</span>
+        </button>
+      </header>
+
+      <section class="settings-panel" id="settings-panel" hidden>
+        <form id="settings-form" class="settings-form">
+          <label>
+            <span>GitHub Token</span>
+            <input
+              id="token-input"
+              name="token"
+              type="password"
+              autocomplete="off"
+              spellcheck="false"
+              placeholder="fine-grained PAT"
+            />
+          </label>
+          <div class="settings-actions">
+            <button type="submit">저장</button>
+            <button id="clear-token" type="button" class="secondary">토큰 삭제</button>
+          </div>
+          <p class="hint">대상 저장소는 DokySp/idea-to-code입니다. 토큰은 이 단말의 브라우저 저장소에만 보관됩니다. 권한은 대상 저장소의 Issues 읽기/쓰기만 부여하세요.</p>
+        </form>
+      </section>
+
+      <main>
+        <section class="status-row" aria-live="polite">
+          <div>
+            <span class="repo-chip" id="repo-chip">DokySp/idea-to-code</span>
+            <span id="sync-state">동기화 대기</span>
+          </div>
+          <button id="refresh-button" type="button" class="secondary">새로고침</button>
+        </section>
+
+        <section class="board" aria-label="GitHub issue kanban board">
+          <article class="column" data-status="todo">
+            <header>
+              <h2>Todo</h2>
+              <span class="count" id="todo-count">0</span>
+            </header>
+            <div class="issue-list" id="todo-list"></div>
+          </article>
+          <article class="column" data-status="doing">
+            <header>
+              <h2>Doing</h2>
+              <span class="count" id="doing-count">0</span>
+            </header>
+            <div class="issue-list" id="doing-list"></div>
+          </article>
+          <article class="column" data-status="done">
+            <header>
+              <h2>Done</h2>
+              <span class="count" id="done-count">0</span>
+            </header>
+            <div class="issue-list" id="done-list"></div>
+          </article>
+        </section>
+      </main>
+
+      <form id="composer" class="composer">
+        <textarea id="idea-input" rows="1" placeholder="구현할 아이디어를 입력하세요" required></textarea>
+        <button id="send-button" type="submit">전송</button>
+      </form>
+    </div>
+
+    <template id="issue-card-template">
+      <button class="issue-card" type="button">
+        <span class="issue-title"></span>
+        <span class="issue-meta"></span>
+      </button>
+    </template>
+
+    <script src="./app.js" type="module"></script>
+  </body>
+</html>
