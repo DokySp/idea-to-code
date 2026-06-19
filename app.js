@@ -1,10 +1,8 @@
 const STORAGE_KEYS = {
-  repo: "idea-to-code.repo",
   token: "idea-to-code.github-token",
-  clientId: "idea-to-code.github-client-id",
-  oauthEndpoint: "idea-to-code.oauth-endpoint",
   oauthState: "idea-to-code.oauth-state",
 };
+const APP_CONFIG = window.IDEA_TO_CODE_CONFIG || {};
 const GITHUB_AUTHORIZE_URL = "https://github.com/login/oauth/authorize";
 const GITHUB_OAUTH_SCOPE = "repo";
 const STATUS_LABELS = {
@@ -27,20 +25,16 @@ const state = {
   repo: inferredRepo || "",
   repoSource: inferredRepo ? "auto" : "missing",
   token: localStorage.getItem(STORAGE_KEYS.token) || "",
-  clientId: localStorage.getItem(STORAGE_KEYS.clientId) || "",
-  oauthEndpoint: localStorage.getItem(STORAGE_KEYS.oauthEndpoint) || "",
+  clientId: String(APP_CONFIG.githubClientId || "").trim(),
+  oauthEndpoint: normalizeOptionalOAuthEndpoint(APP_CONFIG.oauthExchangeUrl),
 };
 
 const $ = (selector) => document.querySelector(selector);
 const elements = {
   settingsToggle: $("#settings-toggle"),
   settingsPanel: $("#settings-panel"),
-  settingsForm: $("#settings-form"),
   loginButton: $("#login-button"),
   logoutButton: $("#logout-button"),
-  repoInput: $("#repo-input"),
-  clientIdInput: $("#client-id-input"),
-  oauthEndpointInput: $("#oauth-endpoint-input"),
   repoChip: $("#repo-chip"),
   syncState: $("#sync-state"),
   refreshButton: $("#refresh-button"),
@@ -116,9 +110,6 @@ function setStatus(message, isError = false) {
 
 function updateRepoDisplay() {
   elements.repoChip.textContent = state.repo || "Repository 설정 필요";
-  elements.repoInput.value = state.repo;
-  elements.clientIdInput.value = state.clientId;
-  elements.oauthEndpointInput.value = state.oauthEndpoint;
 }
 
 function authHeaders() {
@@ -147,50 +138,25 @@ function createOAuthState() {
   return Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
-function saveOAuthSettings(formData) {
-  const repo = String(formData.get("repo") || "").trim();
-  const clientId = String(formData.get("clientId") || "").trim();
-  const oauthEndpoint = String(formData.get("oauthEndpoint") || "").trim();
-
-  if (repo) {
-    const { fullName } = parseRepo(repo);
-    state.repo = fullName;
-    state.repoSource = "saved";
-    localStorage.setItem(STORAGE_KEYS.repo, fullName);
+function normalizeOptionalOAuthEndpoint(endpoint) {
+  if (!endpoint) {
+    return "";
   }
-
-  if (clientId) {
-    state.clientId = clientId;
-    localStorage.setItem(STORAGE_KEYS.clientId, clientId);
+  try {
+    const url = new URL(endpoint);
+    if (!/^https?:$/.test(url.protocol)) {
+      return "";
+    }
+    return url.toString();
+  } catch {
+    return "";
   }
-
-  if (oauthEndpoint) {
-    state.oauthEndpoint = normalizeOAuthEndpoint(oauthEndpoint);
-    localStorage.setItem(STORAGE_KEYS.oauthEndpoint, state.oauthEndpoint);
-  }
-
-  updateRepoDisplay();
-}
-
-function normalizeOAuthEndpoint(endpoint) {
-  const url = new URL(endpoint);
-  if (!/^https?:$/.test(url.protocol)) {
-    throw new Error("OAuth Exchange URL은 http 또는 https URL이어야 합니다.");
-  }
-  return url.toString();
 }
 
 function startOAuthLogin() {
-  try {
-    saveOAuthSettings(new FormData(elements.settingsForm));
-  } catch (error) {
-    setStatus(error.message, true);
-    return;
-  }
-
   if (!state.clientId || !state.oauthEndpoint) {
     elements.settingsPanel.hidden = false;
-    setStatus("OAuth Client ID와 Exchange URL을 먼저 저장하세요.", true);
+    setStatus("앱 OAuth 설정이 필요합니다.", true);
     return;
   }
 
@@ -231,7 +197,7 @@ async function handleOAuthCallback() {
   }
 
   if (!state.oauthEndpoint) {
-    setStatus("OAuth Exchange URL 설정이 필요합니다.", true);
+    setStatus("앱 OAuth 설정이 필요합니다.", true);
     elements.settingsPanel.hidden = false;
     return true;
   }
@@ -348,32 +314,6 @@ async function inferRepositoryFromToken() {
   state.repo = verified;
   state.repoSource = "token";
   updateRepoDisplay();
-}
-
-function applySavedRepositoryFallback(options = {}) {
-  const { force = false, exclude = "" } = options;
-  if (state.repo && !force) {
-    return false;
-  }
-
-  const savedRepo = localStorage.getItem(STORAGE_KEYS.repo);
-  if (!savedRepo) {
-    return false;
-  }
-
-  try {
-    const fullName = parseRepo(savedRepo).fullName;
-    if (exclude && fullName.toLowerCase() === exclude.toLowerCase()) {
-      return false;
-    }
-    state.repo = fullName;
-    state.repoSource = "saved";
-    updateRepoDisplay();
-    return true;
-  } catch {
-    localStorage.removeItem(STORAGE_KEYS.repo);
-    return false;
-  }
 }
 
 async function getRepositoryCandidatesFromToken() {
@@ -519,7 +459,6 @@ function titleFromText(text) {
 
 async function loadIssues() {
   await inferRepositoryFromToken();
-  applySavedRepositoryFallback();
 
   if (!state.repo) {
     elements.settingsPanel.hidden = false;
@@ -545,11 +484,6 @@ async function loadIssuesForCurrentRepository() {
     renderIssues();
     setStatus(`동기화 완료: ${state.issues.length}개`);
   } catch (error) {
-    if (state.repoSource !== "saved" && applySavedRepositoryFallback({ force: true, exclude: fullName })) {
-      setBusy(false);
-      await loadIssuesForCurrentRepository();
-      return;
-    }
     setStatus(error.message, true);
   } finally {
     setBusy(false);
@@ -650,26 +584,9 @@ function renderIssues() {
   }
 }
 
-function saveSettings(formData) {
-  saveOAuthSettings(formData);
-  updateRepoDisplay();
-  elements.settingsPanel.hidden = true;
-  setStatus("설정 저장 완료");
-}
-
 function bindEvents() {
   elements.settingsToggle.addEventListener("click", () => {
     elements.settingsPanel.hidden = !elements.settingsPanel.hidden;
-  });
-
-  elements.settingsForm.addEventListener("submit", (event) => {
-    event.preventDefault();
-    try {
-      saveSettings(new FormData(elements.settingsForm));
-      loadIssues();
-    } catch (error) {
-      setStatus(error.message, true);
-    }
   });
 
   elements.loginButton.addEventListener("click", startOAuthLogin);
@@ -677,6 +594,7 @@ function bindEvents() {
   elements.logoutButton.addEventListener("click", () => {
     state.token = "";
     localStorage.removeItem(STORAGE_KEYS.token);
+    localStorage.removeItem("idea-to-code.repo");
     elements.settingsPanel.hidden = false;
     setStatus("로그아웃 완료");
   });
@@ -716,9 +634,6 @@ async function registerServiceWorker() {
 }
 
 async function init() {
-  if (!state.token) {
-    applySavedRepositoryFallback();
-  }
   updateRepoDisplay();
   bindEvents();
   renderIssues();

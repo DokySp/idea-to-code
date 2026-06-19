@@ -100,7 +100,7 @@ h2 {
 
 .settings-form {
   display: grid;
-  grid-template-columns: minmax(180px, 1fr) minmax(220px, 1.4fr) auto;
+  grid-template-columns: 1fr;
   gap: 14px;
   padding: 16px;
 }

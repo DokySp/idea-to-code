@@ -26,40 +26,13 @@
       </header>
 
       <section class="settings-panel" id="settings-panel" hidden>
-        <form id="settings-form" class="settings-form">
-          <label>
-            <span>Repository</span>
-            <input id="repo-input" name="repo" autocomplete="off" spellcheck="false" placeholder="owner/repo" />
-          </label>
-          <label>
-            <span>OAuth Client ID</span>
-            <input
-              id="client-id-input"
-              name="clientId"
-              type="text"
-              autocomplete="off"
-              spellcheck="false"
-              placeholder="GitHub OAuth App Client ID"
-            />
-          </label>
-          <label>
-            <span>OAuth Exchange URL</span>
-            <input
-              id="oauth-endpoint-input"
-              name="oauthEndpoint"
-              type="url"
-              autocomplete="off"
-              spellcheck="false"
-              placeholder="https://your-worker.example.workers.dev/exchange"
-            />
-          </label>
+        <div class="settings-form">
           <div class="settings-actions">
-            <button type="submit">저장</button>
-            <button id="login-button" type="button" class="secondary">GitHub 로그인</button>
+            <button id="login-button" type="button">GitHub 로그인</button>
             <button id="logout-button" type="button" class="secondary">로그아웃</button>
           </div>
-          <p class="hint">GitHub Pages 기본 주소는 owner/repo를 자동 감지합니다. 최초 로그인에는 OAuth App Client ID와 token exchange worker URL이 필요합니다. 발급된 access token은 이 단말의 브라우저 저장소에만 보관됩니다.</p>
-        </form>
+          <p class="hint">GitHub 로그인 후 인증정보는 이 단말의 브라우저 저장소에만 보관됩니다.</p>
+        </div>
       </section>
 
       <main>
@@ -109,6 +82,7 @@
       </button>
     </template>
 
+    <script src="./app-config.js"></script>
     <script src="./app.js" type="module"></script>
   </body>
 </html>

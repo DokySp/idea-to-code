@@ -1,8 +1,9 @@
-const CACHE_NAME = "idea-to-code-v2";
+const CACHE_NAME = "idea-to-code-v3";
 const APP_SHELL = [
   "./",
   "./index.html",
   "./styles.css",
+  "./app-config.js",
   "./app.js",
   "./manifest.webmanifest",
   "./icons/icon.svg",
