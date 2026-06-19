@@ -1,4 +1,4 @@
 window.IDEA_TO_CODE_CONFIG = {
-  githubClientId: "replace-with-oauth-app-client-id",
-  oauthExchangeUrl: "https://replace-with-worker.example.workers.dev/exchange",
+  githubAppSlug: "replace-with-github-app-slug",
+  apiBaseUrl: "https://replace-with-worker.example.workers.dev",
 };
